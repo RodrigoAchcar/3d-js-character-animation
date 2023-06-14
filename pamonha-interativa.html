@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<title>Pamonha Interativa</title>
+		<meta name="author" content="funilariadigital">
+		<link rel="apple-touch-icon" sizes="180x180" href="./media/img/favicon/apple-touch-icon.png">
+		<link rel="icon" type="image/png" sizes="32x32" href="./media/img/favicon/favicon-32x32.png">
+		<link rel="icon" type="image/png" sizes="16x16" href="./media/img/favicon/favicon-16x16.png">
+		<link rel="manifest" href="./media/img/favicon/site.webmanifest">
+		<link rel="stylesheet" href="./static/css/layout.css">
+	</head>
+
+	<body>
+		<div id="container"></div>	
+
+		<!-- Import maps polyfill -->
+		<!-- Remove this when import maps will be widely supported -->
+		<script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "./static/js/build/three.module.js",
+					"three/addons/": "./static/js/jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+			import Stats from 'three/addons/libs/stats.module.js';
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+			let scene, renderer, camera, stats;
+			let model, skeleton, mixer, clock;
+			
+			let counter = 0;
+			let counterElement = document.getElementById('counter');
+			let controls;
+				
+			let walkingAction, runningAction, capoeiraAction, mouthAction, lEyeBrowAction, rEyeBrowAction;
+			let walkingWeight, runningWeight, capoeiraWeight, mouthWeight, lEyeBrowWeight, rEyeBrowWeight;
+			let actions, settings;
+
+			let singleStepMode = false;
+			let sizeOfNextStep = 0;	
+			
+			const container = document.getElementById( 'container' );
+			const panel = new GUI( { width: 320 } );
+			if(window.innerWidth > 600){
+					panel.domElement.style.position = 'absolute';
+					panel.domElement.style.width = '320px';
+				}
+			if(window.innerWidth < 600){
+					panel.domElement.style.position = 'static';
+					panel.domElement.style.width = '100%';
+				}
+			init();
+
+			function init() {
+				camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 100 );				
+				camera.position.set( 0.8, 0.8, -1.2 );
+			
+				clock = new THREE.Clock();
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0xa0a0a0 );
+				scene.fog = new THREE.Fog( 0xa0a0a0, 10, 50 );
+
+				const hemiLight = new THREE.HemisphereLight( 0xffffff, 0x444444 );
+				hemiLight.position.set( 0, 20, 0 );
+				scene.add( hemiLight );
+
+				const dirLight = new THREE.DirectionalLight( 0xffffff );
+				dirLight.position.set( - 3, 10, - 10 );
+				dirLight.castShadow = true;
+				dirLight.shadow.camera.top = 2;
+				dirLight.shadow.camera.bottom = - 2;
+				dirLight.shadow.camera.left = - 2;
+				dirLight.shadow.camera.right = 2;
+				dirLight.shadow.camera.near = 0.1;
+				dirLight.shadow.camera.far = 40;
+				scene.add( dirLight );	
+				
+				const mesh = new THREE.Mesh( new THREE.PlaneGeometry( 2, 2 ), new THREE.MeshPhongMaterial( { color: 0x999999, depthWrite: false } ) );
+				mesh.rotation.x = - Math.PI / 2;
+				mesh.receiveShadow = true;
+				scene.add( mesh );				
+				
+				const loader = new GLTFLoader();
+				loader.load( './static/js/models/gltf/Pamonha/Pamonha.glb', function ( gltf ) {
+					model = gltf.scene;
+					scene.add( model );
+					model.traverse( function ( object ) {
+						if ( object.isMesh ) object.castShadow = true;
+					} );
+					skeleton = new THREE.SkeletonHelper( model );
+					skeleton.visible = false;
+					scene.add( skeleton );
+					createPanel();
+					const animations = gltf.animations;
+					mixer = new THREE.AnimationMixer( model );
+					
+					walkingAction = mixer.clipAction( animations[ 3 ] );
+					runningAction = mixer.clipAction( animations[ 2 ] );
+					capoeiraAction = mixer.clipAction( animations[ 0 ] );
+					mouthAction = mixer.clipAction( animations[ 6 ] );
+					lEyeBrowAction = mixer.clipAction( animations[ 4 ] );
+					rEyeBrowAction = mixer.clipAction( animations[ 5 ] );
+					actions = [ walkingAction, runningAction, capoeiraAction, mouthAction, lEyeBrowAction, rEyeBrowAction ];
+					activateAllActions();
+					
+					animate();
+				} );
+							
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.shadowMap.enabled = true;
+				container.appendChild( renderer.domElement );
+				
+				controls = new OrbitControls( camera, renderer.domElement );
+				controls.target.set( 0, 0.3, 0 );
+				controls.update();
+
+				stats = new Stats();				
+	
+				container.appendChild( stats.dom );
+				window.addEventListener( 'resize', onWindowResize );
+			}			
+			function createPanel() {				
+				const folder1 = panel.addFolder( 'Visibility' );
+				const folder2 = panel.addFolder( 'Movimento' );
+				const folder3 = panel.addFolder( 'Face' );
+				settings = {
+					'show model': true,
+					'show skeleton': false,
+					'walking weight': 0,
+					'running weight': 0,
+					'capoeira weight': 0,
+					'modify time scale': 1.0,
+					'mouth weight': 0.5,
+					'left eyebrow weight': 0.5,
+					'right eyebrow weight': 0.5
+				};
+				folder1.add( settings, 'show model' ).onChange( showModel );
+				folder1.add( settings, 'show skeleton' ).onChange( showSkeleton );	
+
+				folder2.add( settings, 'walking weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+					setWeight( walkingAction, weight );
+				} );
+				folder2.add( settings, 'running weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+					setWeight( runningAction, weight );
+				} );
+				folder2.add( settings, 'capoeira weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+					setWeight( capoeiraAction, weight );
+				} );				
+				folder2.add( settings, 'modify time scale', 0.0, 2, 0.01 ).onChange( modifyTimeScale );
+				
+				folder3.add( settings, 'mouth weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+					setStaticWeight( mouthAction, weight );
+				} );	
+				folder3.add( settings, 'left eyebrow weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+					setStaticWeight( lEyeBrowAction, weight );
+				} );	
+				folder3.add( settings, 'right eyebrow weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+					setStaticWeight( rEyeBrowAction, weight );
+				} );
+				
+				folder1.open();					
+				folder2.open();
+				folder3.open();
+			}	
+			function showModel( visibility ) {
+				model.visible = visibility;
+			}
+			function showSkeleton( visibility ) {
+				skeleton.visible = visibility;
+			}
+			function setWeight( action, weight ) {
+				action.enabled = true;
+				action.setEffectiveTimeScale( 1 );
+				action.setEffectiveWeight( weight );
+			}
+			function setStaticWeight( action, weight ) {
+				action.enabled = true;
+				action.setEffectiveTimeScale();
+				action.setEffectiveWeight( weight );
+			}
+			function activateAllActions() {
+				setWeight( walkingAction, settings[ 'walking weight' ] );
+				setWeight( runningAction, settings[ 'running weight' ] );
+				setWeight( capoeiraAction, settings[ 'capoeira weight' ] );
+				setStaticWeight( mouthAction, settings[ 'mouth weight' ] );
+				setStaticWeight( lEyeBrowAction, settings[ 'left eyebrow weight' ] );
+				setStaticWeight( rEyeBrowAction, settings[ 'right eyebrow weight' ] );
+				actions.forEach( function ( action ) {
+					action.play();
+				} );
+			}			
+			function updateWeightSliders() {
+				settings[ 'walking weight' ] = walkingWeight;
+				settings[ 'running weight' ] = runningWeight;
+				settings[ 'capoeira weight' ] = capoeiraWeight;
+				settings[ 'mouth weight' ] = mouthWeight;
+				settings[ 'left eyebrow weight' ] = lEyeBrowWeight;
+				settings[ 'right eyebrow weight' ] = rEyeBrowWeight;
+			}	
+			function modifyTimeScale( speed ) {
+				mixer.timeScale = speed;
+			}	
+			function onWindowResize() {
+				if(window.innerWidth > 600){
+					panel.domElement.style.position = 'absolute';
+					panel.domElement.style.width = '320px';
+				}
+				if(window.innerWidth < 600){
+					panel.domElement.style.position = 'static';
+					panel.domElement.style.width = '100%';
+				}				
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+			function animate() {
+				requestAnimationFrame( animate );		
+		
+				walkingWeight = walkingAction.getEffectiveWeight();
+				runningWeight = runningAction.getEffectiveWeight();
+				capoeiraWeight = capoeiraAction.getEffectiveWeight();
+				mouthWeight = mouthAction.getEffectiveWeight();
+				lEyeBrowWeight = lEyeBrowAction.getEffectiveWeight();
+				rEyeBrowWeight = rEyeBrowAction.getEffectiveWeight();
+				
+				updateWeightSliders();
+				let mixerUpdateDelta = clock.getDelta();
+				mixer.update( mixerUpdateDelta );
+				stats.update();
+				renderer.render( scene, camera );
+			}
+		</script>
+
+	</body>
+</html>
